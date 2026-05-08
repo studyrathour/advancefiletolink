@@ -1,21 +1,18 @@
 import asyncio
 import os
 import sys
-import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from pyrogram import Client
-from pyrogram.handlers import MessageHandler
 
 import database as db
 from config import Config
 from plugins import setup_all_handlers
 from server.stream_routes import app as fastapi_app
 from streamer import init_streamer
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from utils.logger import logger
+from utils.log_helpers import log_bot_start
 
 clients = []
 
@@ -51,8 +48,10 @@ async def start_bots():
             client = await create_pyrogram_client(Config.BOT_TOKEN, 0)
             await client.start()
             clients.append(client)
+            me = await client.get_me()
             logger.info("Bot started successfully")
-            logger.info(f"Bot info: {await client.get_me()}")
+            logger.info(f"Bot info: {me}")
+            await log_bot_start(client, me.username or str(me.id))
         except Exception as e:
             logger.error(f"Failed to start bot: {e}")
             import traceback

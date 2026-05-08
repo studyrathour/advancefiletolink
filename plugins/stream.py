@@ -9,6 +9,8 @@ from pyrogram.types import Message
 from config import Config
 import database as db
 from streamer import streamer
+from utils.logger import logger
+from utils.log_helpers import log_newusr, log_file_upload
 
 FILE_TYPES = (
     filters.document | filters.video | filters.photo |
@@ -71,7 +73,7 @@ async def fwd_media(client: Client, message: Message):
         forwarded = await message.forward(Config.BIN_CHANNEL)
         return forwarded
     except Exception as e:
-        print(f"Forward error: {e}")
+        logger.error(f"Forward error: {e}")
         return None
 
 async def process_file(client: Client, message: Message):
@@ -124,17 +126,24 @@ async def process_file(client: Client, message: Message):
 
         await proc_msg.edit(text, disable_web_page_preview=True)
 
-        if Config.LOG_CHANNEL:
-            try:
-                await client.send_message(
-                    Config.LOG_CHANNEL,
-                    f"New file uploaded by {message.from_user.mention}\nFile: {file_info['name']}\nSize: {file_info['size_text']}"
-                )
-            except:
-                pass
+        # ── Telegram log channel ─────────────────────────────────────────
+        is_new_user = not await db.get_user(user_id)  # check BEFORE save_user
+        if is_new_user:
+            await log_newusr(client, user_id, message.from_user.first_name or "")
+
+        await log_file_upload(
+            client,
+            user_id=user_id,
+            user_name=message.from_user.username or message.from_user.first_name or str(user_id),
+            file_name=file_info["name"],
+            file_size=file_info["size_text"],
+            stream_url=stream_url,
+            dl_url=dl_url,
+            source="private",
+        )
 
     except Exception as e:
-        print(f"Process error: {e}")
+        logger.error(f"Process error: {e}", exc_info=True)
         await proc_msg.edit(f"Error: {str(e)}")
 
 async def get_file_info(message: Message) -> dict:
@@ -243,8 +252,21 @@ async def handle_channel_file(client: Client, message: Message):
 
         await message.reply(text, disable_web_page_preview=True)
 
+        # ── Telegram log channel ─────────────────────────────────────────
+        chat_title = message.chat.title or str(chat_id)
+        await log_file_upload(
+            client,
+            user_id=chat_id,
+            user_name=chat_title,
+            file_name=file_info["name"],
+            file_size=file_info["size_text"],
+            stream_url=stream_url,
+            dl_url=dl_url,
+            source=f"channel:{chat_title}",
+        )
+
     except Exception as e:
-        print(f"Channel file error: {e}")
+        logger.error(f"Channel file error: {e}", exc_info=True)
 
 def setup_stream_handlers(app: Client):
     @app.on_message(filters.private & filters.incoming & FILE_TYPES)

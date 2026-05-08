@@ -43,6 +43,20 @@
 
 | Feature | Source Repository | URL |
 |---------|------------------|-----|
+| **Log System** | FileToLink2 | https://github.com/studyrathour/FileToLink2 |
+| Rotating file logger (10MB, 5 backups) | ✅ | |
+| Async queue-based logging (non-blocking) | ✅ | |
+| Bot-start announcement to LOG_CHANNEL | ✅ | |
+| New-user notification to BIN_CHANNEL | ✅ | |
+| Rich per-upload log (name, size, user, links) | ✅ | |
+| Channel-file upload logging | ✅ | |
+| Critical error alerts to OWNER_ID | ✅ | |
+| All print() replaced with structured logger | ✅ | |
+
+---
+
+| Feature | Source Repository | URL |
+|---------|------------------|-----|
 | **Security** | FileToLink2 | https://github.com/studyrathour/FileToLink2 |
 | Token-based access control | ✅ | |
 | Rate limiting | ✅ | |
