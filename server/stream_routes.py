@@ -89,7 +89,7 @@ async def stream_content(file_data: dict, range_header: Optional[str] = None):
     from config import Config
 
     if not streamer or not streamer.clients:
-        return b""
+        return
 
     message_id = int(file_data["message_id"])
     file_size = file_data.get("file_size", 0)
