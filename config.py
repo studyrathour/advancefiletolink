@@ -15,8 +15,8 @@ class Config:
     MULTI_TOKEN_4 = os.getenv("MULTI_TOKEN_4", "")
     MULTI_TOKEN_5 = os.getenv("MULTI_TOKEN_5", "")
 
-    @property
-    def MULTI_TOKEN(self):
+    @staticmethod
+    def get_multi_tokens():
         tokens = []
         for i in range(1, 50):
             token = os.getenv(f"MULTI_TOKEN_{i}", "")

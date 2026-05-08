@@ -37,8 +37,8 @@ async def create_pyrogram_client(token: str, index: int):
 async def start_bots():
     global clients
 
-    if Config.MULTI_TOKEN:
-        for i, token in enumerate(Config.MULTI_TOKEN):
+    if Config.get_multi_tokens():
+        for i, token in enumerate(Config.get_multi_tokens()):
             try:
                 client = await create_pyrogram_client(token, i)
                 await client.start()
