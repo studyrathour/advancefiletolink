@@ -88,8 +88,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="File2Link Bot", lifespan=lifespan)
 
 for route in fastapi_app.routes:
-    if hasattr(route, 'path'):
-        app.router.add_route(route.methods.pop(), route.path, route.endpoint)
+    if hasattr(route, 'path') and hasattr(route, 'methods'):
+        if not route.path.startswith('/'):
+            continue
+        for method in route.methods:
+            try:
+                app.router.add_route(method, route.path, route.endpoint)
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     import uvicorn
