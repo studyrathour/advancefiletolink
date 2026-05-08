@@ -19,6 +19,18 @@ FILE_TYPES = (
 async def is_user_banned(user_id: int) -> bool:
     return await db.is_banned_user(user_id)
 
+async def get_dc_id(client: Client) -> int:
+    """Safely retrieve the DC ID from a Pyrogram client (works in all versions)."""
+    try:
+        # Pyrogram 2.x stores dc_id on the storage object (async)
+        return await client.storage.dc_id()
+    except Exception:
+        try:
+            # Some builds expose it directly
+            return client.dc_id  # type: ignore
+        except Exception:
+            return 1
+
 async def is_channel_banned(channel_id: int) -> bool:
     if channel_id in Config.BANNED_CHANNELS:
         return True
@@ -94,7 +106,7 @@ async def process_file(client: Client, message: Message):
             file_name=file_info["name"],
             file_size=file_info["size"],
             user_id=user_id,
-            dc_id=client.dc_id,
+            dc_id=await get_dc_id(client),
             file_type=file_info["type"]
         )
 
@@ -216,7 +228,7 @@ async def handle_channel_file(client: Client, message: Message):
             file_name=file_info["name"],
             file_size=file_info["size"],
             user_id=chat_id,
-            dc_id=client.dc_id,
+            dc_id=await get_dc_id(client),
             file_type=file_info["type"]
         )
 

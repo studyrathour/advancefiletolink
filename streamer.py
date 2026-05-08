@@ -56,7 +56,7 @@ class ByteStreamer:
                     location,
                     offset,
                     part_size,
-                    client.dc_id
+                    await client.storage.dc_id()
                 )
                 if not chunk:
                     break
@@ -128,7 +128,11 @@ class ByteStreamer:
 
         client = self.clients[client_index]
 
-        if client.dc_id != dc_id:
+        try:
+            client_dc = await client.storage.dc_id()
+        except Exception:
+            client_dc = getattr(client, 'dc_id', None)
+        if client_dc != dc_id:
             try:
                 auth_key = await client.invoke(
                     raw.functions.auth.ExportAuthorization(dc_id=dc_id)

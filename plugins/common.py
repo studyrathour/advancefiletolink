@@ -95,9 +95,11 @@ def setup_common_handlers(app: Client):
 
     @app.on_message(filters.command("dc"))
     async def dc_handler(client: Client, message: Message):
+        from plugins.stream import get_dc_id
+        dc = await get_dc_id(client)
         await message.reply(
             f"📡 **Data Center Info**\n\n"
-            f"DC ID: `{client.dc_id}`\n"
+            f"DC ID: `{dc}`\n"
             f"Bot ID: `{(await client.get_me()).id}`"
         )
 
