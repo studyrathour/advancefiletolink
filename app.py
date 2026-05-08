@@ -37,6 +37,9 @@ async def create_pyrogram_client(token: str, index: int):
 async def start_bots():
     global clients
 
+    logger.info(f"BOT_TOKEN: {Config.BOT_TOKEN[:20]}..." if Config.BOT_TOKEN else "BOT_TOKEN: NOT SET")
+    logger.info(f"MULTI_TOKEN: {Config.get_multi_tokens()}")
+
     if Config.get_multi_tokens():
         for i, token in enumerate(Config.get_multi_tokens()):
             try:
