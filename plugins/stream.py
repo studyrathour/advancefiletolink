@@ -20,16 +20,18 @@ async def is_user_banned(user_id: int) -> bool:
     return await db.is_banned_user(user_id)
 
 async def get_dc_id(client: Client) -> int:
-    """Safely retrieve the DC ID from a Pyrogram client (works in all versions)."""
+    """Safely retrieve the DC ID from a Pyrogram 2.x client."""
     try:
-        # Pyrogram 2.x stores dc_id on the storage object (async)
-        return await client.storage.dc_id()
+        # In Pyrogram 2.0.x, storage.dc_id is a plain integer property
+        dc = client.storage.dc_id
+        if callable(dc):
+            import inspect
+            if inspect.iscoroutinefunction(dc):
+                return await dc()
+            return dc()
+        return int(dc)
     except Exception:
-        try:
-            # Some builds expose it directly
-            return client.dc_id  # type: ignore
-        except Exception:
-            return 1
+        return 1
 
 async def is_channel_banned(channel_id: int) -> bool:
     if channel_id in Config.BANNED_CHANNELS:

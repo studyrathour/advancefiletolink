@@ -56,7 +56,7 @@ class ByteStreamer:
                     location,
                     offset,
                     part_size,
-                    await client.storage.dc_id()
+                    getattr(client.storage, 'dc_id', 1) if not callable(getattr(client.storage, 'dc_id', None)) else 1
                 )
                 if not chunk:
                     break
@@ -129,9 +129,10 @@ class ByteStreamer:
         client = self.clients[client_index]
 
         try:
-            client_dc = await client.storage.dc_id()
+            dc_attr = getattr(client.storage, 'dc_id', None)
+            client_dc = dc_attr() if callable(dc_attr) else dc_attr
         except Exception:
-            client_dc = getattr(client, 'dc_id', None)
+            client_dc = None
         if client_dc != dc_id:
             try:
                 auth_key = await client.invoke(
