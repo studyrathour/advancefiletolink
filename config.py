@@ -35,16 +35,17 @@ class Config:
     PORT = int(os.getenv("PORT", 8080))
     BIND_ADDRESS = os.getenv("BIND_ADDRESS", "0.0.0.0")
 
-    @property
-    def BASE_URL(self):
-        if self.FQDN:
-            if self.NO_PORT or self.HAS_SSL:
-                return f"https://{self.FQDN}"
+    @classmethod
+    def BASE_URL(cls):
+        if cls.FQDN:
+            if cls.NO_PORT or cls.HAS_SSL:
+                return f"https://{cls.FQDN}"
             else:
-                return f"http://{self.FQDN}:{self.PORT}"
-        return f"http://localhost:{self.PORT}"
+                return f"http://{cls.FQDN}:{cls.PORT}"
+        return f"http://localhost:{cls.PORT}"
 
     FORCE_CHANNEL_ID = int(os.getenv("FORCE_CHANNEL_ID", 0)) if os.getenv("FORCE_CHANNEL_ID") else None
+    FORCE_SUB_CHANNEL = FORCE_CHANNEL_ID  # alias used in stream.py
 
     CHANNEL = os.getenv("CHANNEL", "False").lower() == "true"
 

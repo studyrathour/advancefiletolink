@@ -30,15 +30,15 @@ async def show_file(request: Request, file_id: str):
     if not file_data:
         raise HTTPException(status_code=404, detail="File not found")
 
-    stream_url = f"{Config.BASE_URL}/dl/{file_data['message_id']}/{file_id}"
-    dl_url = f"{Config.BASE_URL}/dl/{file_data['message_id']}/{file_id}?download=1"
+    stream_url = f"{Config.BASE_URL()}/dl/{file_data['message_id']}/{file_id}"
+    dl_url = f"{Config.BASE_URL()}/dl/{file_data['message_id']}/{file_id}?download=1"
 
     return templates.TemplateResponse("show.html", {
         "request": request,
         "file": file_data,
         "stream_url": stream_url,
         "dl_url": dl_url,
-        "base_url": Config.BASE_URL
+        "base_url": Config.BASE_URL()
     })
 
 @app.get("/api/file/{file_id}")
@@ -52,8 +52,8 @@ async def api_file_info(file_id: str):
         "file_name": file_data["file_name"],
         "file_size": file_data["file_size"],
         "downloads": file_data.get("downloads", 0),
-        "stream_url": f"{Config.BASE_URL}/dl/{file_data['message_id']}/{file_id}",
-        "dl_url": f"{Config.BASE_URL}/dl/{file_data['message_id']}/{file_id}?download=1"
+        "stream_url": f"{Config.BASE_URL()}/dl/{file_data['message_id']}/{file_id}",
+        "dl_url": f"{Config.BASE_URL()}/dl/{file_data['message_id']}/{file_id}?download=1"
     }
 
 @app.get("/dl/{message_id}/{file_id}")
@@ -182,7 +182,7 @@ async def admin_dashboard(request: Request):
         "request": request,
         "stats": stats,
         "files": files,
-        "base_url": Config.BASE_URL
+        "base_url": Config.BASE_URL()
     })
 
 @app.get("/health")

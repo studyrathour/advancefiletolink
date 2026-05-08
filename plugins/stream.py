@@ -100,8 +100,8 @@ async def process_file(client: Client, message: Message):
 
         await db.save_user(user_id, message.from_user.first_name, message.from_user.username)
 
-        stream_url = f"{Config.BASE_URL}/dl/{file_id}/{unique_id}"
-        dl_url = f"{Config.BASE_URL}/dl/{file_id}/{unique_id}?download=1"
+        stream_url = f"{Config.BASE_URL()}/dl/{file_id}/{unique_id}"
+        dl_url = f"{Config.BASE_URL()}/dl/{file_id}/{unique_id}?download=1"
 
         text = f"📄 **{file_info['name']}**\n\n"
         text += f"📥 **Download:** {dl_url}\n"
@@ -220,8 +220,8 @@ async def handle_channel_file(client: Client, message: Message):
             file_type=file_info["type"]
         )
 
-        stream_url = f"{Config.BASE_URL}/dl/{file_id}/{unique_id}"
-        dl_url = f"{Config.BASE_URL}/dl/{file_id}/{unique_id}?download=1"
+        stream_url = f"{Config.BASE_URL()}/dl/{file_id}/{unique_id}"
+        dl_url = f"{Config.BASE_URL()}/dl/{file_id}/{unique_id}?download=1"
 
         text = f"📄 **{file_info['name']}**\n\n"
         text += f"📥 [Download]({dl_url})\n"

@@ -29,10 +29,6 @@ async def create_pyrogram_client(token: str, index: int):
         in_memory=True
     )
 
-    @client.on_message()
-    async def handle_message(client, message):
-        pass
-
     return client
 
 async def start_bots():

@@ -12,13 +12,13 @@ def setup_callback_handlers(app: Client):
         elif data.startswith("view_"):
             file_id = data.replace("view_", "")
             from config import Config
-            stream_url = f"{Config.BASE_URL}/dl/{file_id}"
+            stream_url = f"{Config.BASE_URL()}/dl/{file_id}"
             await query.answer(f"Stream URL: {stream_url}", show_alert=True)
 
         elif data.startswith("download_"):
             file_id = data.replace("download_", "")
             from config import Config
-            dl_url = f"{Config.BASE_URL}/dl/{file_id}?download=1"
+            dl_url = f"{Config.BASE_URL()}/dl/{file_id}?download=1"
             await query.answer(f"Download URL: {dl_url}", show_alert=True)
 
         await query.answer()
