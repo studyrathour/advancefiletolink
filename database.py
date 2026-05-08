@@ -1,3 +1,4 @@
+from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import Config
 
@@ -33,7 +34,7 @@ async def save_file(file_id, message_id, file_name, file_size, user_id, dc_id, f
                 "dc_id": dc_id,
                 "file_type": file_type,
                 "downloads": 0,
-                "created_at": files_collection.database.client.server_info()
+                "created_at": datetime.utcnow()
             }
         },
         upsert=True
@@ -87,7 +88,7 @@ async def is_banned_user(user_id):
 async def ban_user(user_id, reason=None):
     await banned_users_collection.update_one(
         {"user_id": user_id},
-        {"$set": {"reason": reason, "banned_at": files_collection.database.client.server_info()}},
+        {"$set": {"reason": reason, "banned_at": datetime.utcnow()}},
         upsert=True
     )
 
@@ -103,7 +104,7 @@ async def is_banned_channel(channel_id):
 async def ban_channel(channel_id, reason=None):
     await banned_channels_collection.update_one(
         {"channel_id": channel_id},
-        {"$set": {"reason": reason, "banned_at": files_collection.database.client.server_info()}},
+        {"$set": {"reason": reason, "banned_at": datetime.utcnow()}},
         upsert=True
     )
 
@@ -116,7 +117,7 @@ async def is_authorized(user_id):
 async def authorize_user(user_id):
     await authorized_users_collection.update_one(
         {"user_id": user_id},
-        {"$set": {"authorized_at": files_collection.database.client.server_info()}},
+        {"$set": {"authorized_at": datetime.utcnow()}},
         upsert=True
     )
 
@@ -159,7 +160,7 @@ async def get_admin_by_id(admin_id):
 async def update_workload(client_index, workload):
     await workloads_collection.update_one(
         {"client_index": client_index},
-        {"$set": {"workload": workload, "updated_at": files_collection.database.client.server_info()}},
+        {"$set": {"workload": workload, "updated_at": datetime.utcnow()}},
         upsert=True
     )
 
