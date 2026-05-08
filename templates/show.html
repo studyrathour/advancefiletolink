@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ file.file_name }} - File2Link</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: all 0.3s ease;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            transition: all 0.3s ease;
+        }
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .file-icon {
+            font-size: 4rem;
+        }
+        .link-text {
+            word-break: break-all;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center p-4">
+    <div class="w-full max-w-2xl glass rounded-2xl p-8">
+        <div class="text-center mb-8">
+            <div class="file-icon mb-4">
+                {% if file.file_type == 'video' %}
+                🎬
+                {% elif file.file_type == 'audio' %}
+                🎵
+                {% elif file.file_type == 'photo' %}
+                🖼️
+                {% elif file.file_type == 'voice' %}
+                🎙️
+                {% else %}
+                📄
+                {% endif %}
+            </div>
+            <h1 class="text-2xl font-bold mb-2">{{ file.file_name }}</h1>
+            <p class="text-gray-400">{{ (file.file_size / 1024 / 1024)|round(2) }} MB</p>
+        </div>
+
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm text-gray-400 mb-2">📥 Download Link</label>
+                <div class="link-text text-sm">{{ dl_url }}</div>
+            </div>
+
+            <div>
+                <label class="block text-sm text-gray-400 mb-2">🎬 Stream Link</label>
+                <div class="link-text text-sm">{{ stream_url }}</div>
+            </div>
+        </div>
+
+        <div class="flex gap-4 mt-8">
+            <a href="{{ dl_url }}"
+               class="btn-primary flex-1 text-center py-3 rounded-lg font-semibold text-white text-decoration-none">
+                Download
+            </a>
+            <a href="{{ stream_url }}"
+               class="btn-secondary flex-1 text-center py-3 rounded-lg font-semibold text-white text-decoration-none">
+                Stream
+            </a>
+        </div>
+
+        <div class="mt-8 text-center text-gray-500 text-sm">
+            <p>Downloads: {{ file.downloads }}</p>
+            <p class="mt-2">Powered by File2Link Bot</p>
+        </div>
+    </div>
+</body>
+</html>
