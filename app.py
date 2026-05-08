@@ -25,7 +25,8 @@ async def create_pyrogram_client(token: str, index: int):
         api_id=Config.API_ID,
         api_hash=Config.API_HASH,
         bot_token=token,
-        workdir="./sessions"
+        workdir="/tmp/sessions",
+        in_memory=True
     )
 
     @client.on_message()
@@ -55,8 +56,11 @@ async def start_bots():
             await client.start()
             clients.append(client)
             logger.info("Bot started successfully")
+            logger.info(f"Bot info: {await client.get_me()}")
         except Exception as e:
             logger.error(f"Failed to start bot: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     if clients:
         setup_all_handlers(clients[0])
@@ -94,11 +98,17 @@ for route in fastapi_app.routes:
     if hasattr(route, 'path') and hasattr(route, 'methods'):
         if not route.path.startswith('/'):
             continue
-        for method in route.methods:
+        methods = list(route.methods)
+        for method in methods:
             try:
                 app.router.add_route(method, route.path, route.endpoint)
             except Exception:
                 pass
+    elif hasattr(route, 'path') and hasattr(route, 'endpoint'):
+        try:
+            app.router.add_route("GET", route.path, route.endpoint)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     import uvicorn
