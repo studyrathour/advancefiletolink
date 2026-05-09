@@ -1,0 +1,45 @@
+# Comprehensive Architecture Plan: URL Management & Hybrid HF CDN
+
+This plan details how to transform your bot into a professional-grade streaming manager. The goal is to hide the actual Hugging Face URLs from the users (giving them clean, branded links) while utilizing Hugging Face's global CDN to completely save your Render bandwidth.
+
+## 🌟 The Core Concept
+The Render app will act as the **"Brain"** (URL Manager and Database). It will hand out standard links like `https://your-render-app.com/show/unique_id`. 
+When a user clicks "Stream" or "Download", the Render app checks its database:
+- If the file has been uploaded to Hugging Face, Render instantly **redirects** the user to the HF CDN (0 bandwidth used).
+- If it hasn't been uploaded yet, Render streams it directly from Telegram as a fallback.
+
+---
+
+## 🛠️ Phase 1: Database Upgrades (Render)
+We need to update `database.py` in your main app to track CDN links.
+1. Add a new field to the database schema for files: `hf_cdn_url` (String, default: `None`).
+2. Create a new DB function: `update_hf_link(unique_id, cdn_url)` to save the HF link when a file finishes uploading.
+
+## 🛠️ Phase 2: The Manual Upload API (Render)
+You want the ability to manually upload files from your local PC to HF, and then tell the bot about it.
+1. We will add a new secure endpoint to your Render `app.py`: `POST /admin/update_cdn`
+2. **Payload:** `{"unique_id": "file123", "cdn_url": "https://huggingface.co/buckets/Suraj2008/..."}`
+3. You can trigger this endpoint using Postman, a simple Python script on your PC, or even a hidden Telegram command like `/setcdn {unique_id} {url}`.
+
+## 🛠️ Phase 3: Smart Redirects (Render)
+We will modify the `/dl/{mid}/{fname}` endpoint in your Render `app.py`.
+1. When a request comes in, the server queries MongoDB for that file.
+2. **If `hf_cdn_url` exists:** The server responds with an `HTTP 302 Redirect` to the HF URL.
+   - *Result:* The user's browser seamlessly fetches the file from Hugging Face's 10Gbps CDN. Render uses exactly 0 bytes of streaming bandwidth.
+3. **If `hf_cdn_url` is Empty:** The server falls back to the `ByteStreamer` and pulls the file from Telegram in real-time.
+
+## 🛠️ Phase 4: Worker Automation (HF Worker)
+When the HF Worker finishes automatically uploading a file to Hugging Face, it shouldn't just send a Telegram message.
+1. The HF Worker will make an HTTP request to your Render API (`POST /admin/update_cdn`) with the newly generated `final_link`.
+2. This ensures that the exact moment the worker finishes, all future streams for that file automatically switch over to the HF CDN.
+
+## 🪣 Note on the "Buckets" URL
+You specified a URL structure: `https://huggingface.co/buckets/Suraj2008/jftuloyefriyuigt/resolve/...`
+To achieve this exact URL format, you must create a Hugging Face repository under the organization/username `buckets`, or whatever repository structure matches that URL. If this is a specific HF feature you have access to, the worker's `HfApi` logic can be updated to target it by setting the correct `repo_id`.
+
+## 🚦 Summary of the Final Flow
+1. **User uploads file:** Gets clean Render link (`/show/123`).
+2. **User clicks Stream:** Render streams from Telegram.
+3. **User clicks "Get Permanent Link":** HF Worker downloads file -> uploads to HF -> sends `hf_cdn_url` to Render DB.
+4. **Next User clicks Stream:** Render sees the HF URL in DB -> Redirects to HF CDN. Render bandwidth saved!
+5. **Admin PC Upload:** Admin manually uploads to HF -> runs `/setcdn` -> Render updates DB. All future users redirected.

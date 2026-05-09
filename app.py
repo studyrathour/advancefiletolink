@@ -1,119 +1,719 @@
-import asyncio
 import os
-import sys
+import asyncio
+import secrets
+import traceback
+import uvicorn
+import re
+import logging
+import math
+import requests
+import base64
+import random
+import time
+
 from contextlib import asynccontextmanager
+from pyrogram import Client, filters, enums
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberUpdated, CallbackQuery
+from pyrogram.errors import FloodWait, UserNotParticipant
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from pyrogram.file_id import FileId
+from pyrogram import raw
+from pyrogram.session import Session, Auth
 
-from fastapi import FastAPI
-from pyrogram import Client
-from pyrogram.errors import FloodWait
-
-import database as db
 from config import Config
-from plugins import setup_all_handlers
-from server.stream_routes import app as fastapi_app
-from streamer import init_streamer
-from utils.logger import logger
-from utils.log_helpers import log_bot_start
+from database import db
 
-clients = []
+# =====================================================================================
+# --- BACKGROUND POLLING SERVICE (Talks to Controller) ---
+# =====================================================================================
 
-async def create_pyrogram_client(token: str, index: int) -> Client:
-    return Client(
-        f"bot_{index}",
-        api_id=Config.API_ID,
-        api_hash=Config.API_HASH,
-        bot_token=token,
-        workdir="/tmp/sessions",
-        in_memory=True
-    )
+async def poll_controller_queue():
+    if not Config.HF_WORKERS:
+        print("⚠️ No Controller URL configured. Polling disabled.")
+        return
 
-async def start_client(token: str, index: int) -> Client | None:
-    """Start a single Pyrogram client, respecting any FloodWait from Telegram."""
-    max_retries = 5
-    for attempt in range(1, max_retries + 1):
+    # We assume the first URL in the list is your Controller
+    CONTROLLER_URL = Config.HF_WORKERS[0]
+    print(f"🔄 Connected to Controller: {CONTROLLER_URL}")
+    print("🚀 Polling set to 15 seconds...")
+    
+    VIEWER_BASE = "https://v0-file-opener-video-player.vercel.app/view?value="
+
+    while True:
         try:
-            client = await create_pyrogram_client(token, index)
-            await client.start()
-            return client
-        except FloodWait as e:
-            wait = e.value + 5          # add a small buffer
-            logger.warning(
-                f"Bot {index}: FloodWait – Telegram requires waiting {e.value}s "
-                f"before login. Sleeping {wait}s (attempt {attempt}/{max_retries})..."
-            )
-            await asyncio.sleep(wait)   # wait the exact amount Telegram demands
+            # Poll the Controller for finished tasks
+            # Timeout 10s is plenty for the Controller to respond
+            response = await asyncio.to_thread(requests.get, f"{CONTROLLER_URL}/botmessages", timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                messages = data.get("messages", [])
+
+                if messages:
+                    sent_ids = []
+                    for msg in messages:
+                        try:
+                            # Extract Link & Create Viewer URL
+                            url_match = re.search(r"href=['\"](.*?)['\"]", msg['text'])
+                            if url_match:
+                                raw_url = url_match.group(1)
+                                url_bytes = raw_url.encode('ascii')
+                                base64_bytes = base64.b64encode(url_bytes)
+                                base64_code = base64_bytes.decode('ascii')
+                                final_viewer_link = f"{VIEWER_BASE}{base64_code}"
+                                
+                                filename_match = re.search(r"📂 <b>File:</b> (.*)\n", msg['text'])
+                                filename = filename_match.group(1) if filename_match else "File"
+
+                                result_text = (
+                                    f"✅ <b>Permanent Link Ready!</b>\n\n"
+                                    f"📂 <b>File:</b> {filename}\n\n"
+                                    f"👇 <b>Click below to Watch/Download</b>"
+                                )
+                                
+                                buttons = InlineKeyboardMarkup([
+                                    [InlineKeyboardButton("▶️ Open Online Player", url=final_viewer_link)]
+                                ])
+
+                                await bot.send_message(
+                                    chat_id=msg['chat_id'], 
+                                    text=result_text, 
+                                    parse_mode=enums.ParseMode.HTML,
+                                    reply_markup=buttons
+                                )
+                            else:
+                                # Fallback if regex fails
+                                await bot.send_message(msg['chat_id'], msg['text'], parse_mode=enums.ParseMode.HTML)
+
+                            sent_ids.append(msg['id'])
+                            await asyncio.sleep(0.5) # Floodwait protection
+                        except Exception as e:
+                            print(f"❌ Failed to send to {msg.get('chat_id')}: {e}")
+
+                    # Tell Controller we delivered these messages
+                    if sent_ids:
+                        payload = {"message_ids": sent_ids}
+                        await asyncio.to_thread(requests.post, f"{CONTROLLER_URL}/donebotmessages", json=payload, timeout=10)
+        
         except Exception as e:
-            logger.error(f"Bot {index}: Failed to start (attempt {attempt}): {e}", exc_info=True)
-            if attempt < max_retries:
-                await asyncio.sleep(10)
-    logger.error(f"Bot {index}: Gave up after {max_retries} attempts.")
-    return None
-
-async def start_bots():
-    global clients
-
-    logger.info(f"BOT_TOKEN: {Config.BOT_TOKEN[:20]}..." if Config.BOT_TOKEN else "BOT_TOKEN: NOT SET")
-    logger.info(f"MULTI_TOKEN: {Config.get_multi_tokens()}")
-
-    tokens = Config.get_multi_tokens() or ([Config.BOT_TOKEN] if Config.BOT_TOKEN else [])
-
-    for i, token in enumerate(tokens):
-        client = await start_client(token, i)
-        if client:
-            clients.append(client)
-            logger.info(f"Bot {i + 1} started successfully")
-
-    if clients:
-        setup_all_handlers(clients[0])
-        init_streamer(clients)
-        logger.info("Streamer initialized")
-        try:
-            me = await clients[0].get_me()
-            logger.info(f"Bot info: {me}")
-            await log_bot_start(clients[0], me.username or str(me.id))
-        except Exception as e:
-            logger.warning(f"Could not fetch bot info: {e}")
-    else:
-        logger.error("No bots started! Check your BOT_TOKEN and API credentials.")
-
-    return clients
-
-async def stop_bots():
-    global clients
-    for client in clients:
-        try:
-            await client.stop()
-        except Exception as e:
-            logger.error(f"Error stopping client: {e}")
-    clients = []
-
-async def _bot_startup_task():
-    """Run bot startup in the background so the HTTP server starts immediately."""
-    try:
-        await start_bots()
-    except Exception as e:
-        logger.error(f"Bot startup task failed: {e}", exc_info=True)
+            # Controller might be sleeping or restarting, just wait
+            pass
+        
+        # ⚡ UPDATED: Sleep for 15 seconds instead of 30
+        await asyncio.sleep(15)
+        # =====================================================================================
+# --- SETUP, LOGGING & ADMIN COMMANDS ---
+# =====================================================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting File2Link Bot...")
+    await db.connect()
+    try:
+        await bot.start()
+        me = await bot.get_me()
+        Config.BOT_USERNAME = me.username
+        print(f"✅ Bot Started: @{Config.BOT_USERNAME}")
 
-    await db.init_db()
-    logger.info("Database initialized")
+        multi_clients[0] = bot
+        work_loads[0] = 0
+        await initialize_clients()
+        
+        asyncio.create_task(poll_controller_queue())
+        
+        if Config.LOG_CHANNEL:
+            try:
+                await bot.send_message(Config.LOG_CHANNEL, "🟢 **Bot Online (Controller Mode)**")
+            except:
+                pass
 
-    # Start bots in background — FastAPI becomes ready immediately.
-    # This keeps Render's health-check happy even during a FloodWait sleep.
-    asyncio.create_task(_bot_startup_task())
-
+    except Exception as e:
+        print(f"Startup Error: {e}")
+    
     yield
+    if bot.is_initialized: await bot.stop()
+    await db.disconnect()
 
-    await stop_bots()
-    logger.info("Bot stopped")
+app = FastAPI(lifespan=lifespan)
+templates = Jinja2Templates(directory="templates")
 
-app = FastAPI(title="File2Link Bot", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-app.include_router(fastapi_app.router, tags=["api"])
+class HideDLFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "GET /dl/" not in record.getMessage()
+
+logging.getLogger("uvicorn.access").addFilter(HideDLFilter())
+
+bot = Client(
+    "SimpleStreamBot", 
+    api_id=Config.API_ID, 
+    api_hash=Config.API_HASH, 
+    bot_token=Config.BOT_TOKEN, 
+    in_memory=True
+)
+
+multi_clients = {}
+work_loads = {}
+class_cache = {}
+
+class TokenParser:
+    @staticmethod
+    def parse_from_env():
+        return {c + 1: t for c, (_, t) in enumerate(filter(lambda n: n[0].startswith("MULTI_TOKEN"), sorted(os.environ.items())))}
+
+async def start_client(client_id, bot_token):
+    try:
+        client = await Client(name=str(client_id), api_id=Config.API_ID, api_hash=Config.API_HASH, bot_token=bot_token, no_updates=True, in_memory=True).start()
+        work_loads[client_id] = 0
+        multi_clients[client_id] = client
+    except Exception: pass
+
+async def initialize_clients():
+    tokens = TokenParser.parse_from_env()
+    if tokens: await asyncio.gather(*[start_client(i, t) for i, t in tokens.items()])
+
+def get_readable_file_size(size_in_bytes):
+    if not size_in_bytes: return '0B'
+    power = 1024
+    n = 0
+    power_labels = {0: 'B', 1: 'KB', 2: 'MB', 3: 'GB'}
+    while size_in_bytes >= power and n < len(power_labels) - 1:
+        size_in_bytes /= power
+        n += 1
+    return f"{size_in_bytes:.2f} {power_labels[n]}"
+
+def mask_filename(name: str):
+    if not name: return "Protected File"
+    base, ext = os.path.splitext(name)
+    return f"{base[:10]}...{ext}"
+
+async def send_log(user, file_name, file_size, stream_link, dl_link):
+    if not Config.LOG_CHANNEL: return
+    
+    log_msg = (
+        f"<b>#NEW_FILE</b>\n\n"
+        f"👤 <b>User:</b> <a href='tg://user?id={user.id}'>{user.first_name}</a>\n"
+        f"🆔 <b>ID:</b> <code>{user.id}</code>\n"
+        f"📂 <b>File:</b> {file_name}\n"
+        f"📦 <b>Size:</b> {file_size}\n\n"
+        f"🔗 <b>Stream:</b> {stream_link}\n"
+        f"🔗 <b>DL:</b> {dl_link}"
+    )
+    try:
+        await bot.send_message(Config.LOG_CHANNEL, log_msg, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+    except Exception as e:
+        print(f"Log Error: {e}")
+
+@bot.on_message(filters.command(["ban", "unban"]) & filters.user(Config.ADMINS))
+async def admin_ban_handler(client, message):
+    if not message.reply_to_message and len(message.command) < 2:
+        await message.reply("Usage: Reply to user OR `/ban user_id` OR `/ban @username`")
+        return
+
+    cmd = message.command[0]
+    target_id = None
+    
+    if message.reply_to_message:
+        match = re.search(r"ID: <code>(\d+)</code>", message.reply_to_message.text)
+        if match:
+            target_id = int(match.group(1))
+        elif message.reply_to_message.from_user:
+            target_id = message.reply_to_message.from_user.id
+    elif len(message.command) > 1:
+        arg = message.command[1]
+        if arg.isdigit():
+            target_id = int(arg)
+        elif arg.startswith("@"):
+            target_id = await db.get_user_by_username(arg)
+
+    if not target_id:
+        await message.reply("❌ User not found.")
+        return
+
+    if cmd == "ban":
+        await db.ban_user(target_id)
+        await message.reply(f"🚫 User `{target_id}` BANNED.")
+        try: await bot.send_message(target_id, "🚫 <b>You have been banned.</b>")
+        except: pass
+    else:
+        await db.unban_user(target_id)
+        await message.reply(f"✅ User `{target_id}` UNBANNED.")
+        try: await bot.send_message(target_id, "✅ <b>You have been unbanned.</b>")
+        except: pass
+
+@bot.on_message(filters.command("stats") & filters.user(Config.ADMINS))
+async def stats_command(client, message):
+    total = await db.total_users_count()
+    await message.reply(f"📊 **Total Users:** `{total}`")
+
+# Admin command: /setcdn <unique_id> <hf_cdn_url>
+# Use this after you manually upload a file to Hugging Face.
+# Example: /setcdn abc123xyz https://huggingface.co/buckets/Suraj2008/.../file.mp4
+@bot.on_message(filters.command("setcdn") & filters.user(Config.ADMINS))
+async def setcdn_command(client, message: Message):
+    if len(message.command) < 3:
+        await message.reply(
+            "❌ **Usage:** `/setcdn <unique_id> <hf_cdn_url>`\n\n"
+            "**Example:**\n`/setcdn abc123xyz https://huggingface.co/buckets/Suraj2008/.../file.mp4`\n\n"
+            "💡 The `unique_id` is the code at the end of your `/show/` link."
+        )
+        return
+    unique_id = message.command[1]
+    cdn_url = message.command[2]
+    
+    existing = await db.get_link(unique_id)
+    if not existing:
+        await message.reply(f"❌ No file found with ID `{unique_id}`. Check the unique ID from your `/show/` link.")
+        return
+
+    await db.update_hf_link(unique_id, cdn_url)
+    await message.reply(
+        f"✅ **CDN Link Saved!**\n\n"
+        f"🔑 **ID:** `{unique_id}`\n"
+        f"🌐 **CDN URL:** `{cdn_url}`\n\n"
+        f"All future requests for this file will now be redirected to Hugging Face CDN. 🚀"
+    )
+# =====================================================================================
+# --- BOT HANDLERS & WEB SERVER ---
+# =====================================================================================
+
+@bot.on_message(filters.command("start") & filters.private)
+async def start_command(client: Client, message: Message):
+    await db.add_user(message.from_user.id, message.from_user.first_name, message.from_user.username)
+    if await db.is_user_banned(message.from_user.id):
+        await message.reply("🚫 <b>You are banned.</b>")
+        return
+
+    if len(message.command) > 1 and message.command[1].startswith("verify_"):
+        unique_id = message.command[1].split("_", 1)[1]
+        
+        if Config.FORCE_SUB_CHANNEL:
+            try:
+                await client.get_chat_member(Config.FORCE_SUB_CHANNEL, message.from_user.id)
+            except UserNotParticipant:
+                link = f"https://t.me/{str(Config.FORCE_SUB_CHANNEL).replace('@', '')}"
+                btn = [[InlineKeyboardButton("📢 Join Channel", url=link)], 
+                       [InlineKeyboardButton("✅ Try Again", url=f"https://t.me/{Config.BOT_USERNAME}?start={message.command[1]}")]]
+                await message.reply_text("You must join our channel first!", reply_markup=InlineKeyboardMarkup(btn), quote=True)
+                return
+
+        final_link = f"{Config.BASE_URL}/show/{unique_id}"
+        await message.reply_text(
+            f"✅ **Link Generated!**\n\n🔗 `{final_link}`", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Open Link", url=final_link)]]),
+            quote=True
+        )
+    else:
+        await message.reply_text("👋 **Welcome!** Send me a file to generate a link.")
+
+@bot.on_message(filters.private & (filters.document | filters.video | filters.audio))
+async def handle_file_upload(client: Client, message: Message):
+    await db.add_user(message.from_user.id, message.from_user.first_name, message.from_user.username)
+    if await db.is_user_banned(message.from_user.id):
+        await message.reply("🚫 <b>You are banned.</b>")
+        return
+
+    try:
+        sent_message = await message.copy(chat_id=Config.STORAGE_CHANNEL)
+        unique_id = secrets.token_urlsafe(8)
+        await db.save_link(unique_id, sent_message.id)
+        
+        media = message.document or message.video or message.audio
+        file_name = media.file_name or "Unknown_File"
+        file_size = get_readable_file_size(media.file_size)
+        
+        stream_link = f"{Config.BASE_URL}/show/{unique_id}"
+        render_dl_link = f"{Config.BASE_URL}/dl/{sent_message.id}/{file_name.replace(' ', '_')}"
+        
+        render_bytes = render_dl_link.encode('ascii')
+        render_base64 = base64.b64encode(render_bytes).decode('ascii')
+        opener_link = f"https://v0-file-opener-video-player.vercel.app/view?value={render_base64}"
+        
+        asyncio.create_task(send_log(message.from_user, file_name, file_size, opener_link, render_dl_link))
+
+        response_text = (
+            f"<b><u>Your Link Generated !</u></b>\n\n"
+            f"📧 <b>FILE NAME :-</b> <code>{file_name}</code>\n\n"
+            f"📦 <b>FILE SIZE :-</b> {file_size}\n\n"
+            f"<b><u>Tap To Copy Link</u></b> 👇\n\n"
+            f"🖥 <b>Stream :</b> <code>{stream_link}</code>\n\n"
+            f"📥 <b>Download :</b> <code>{render_dl_link}</code>\n\n"
+            f"🚸 <b>NOTE : LINK WON'T EXPIRE TILL I DELETE 🤡</b>"
+        )
+        
+        buttons = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("• STREAM •", url=opener_link),
+                InlineKeyboardButton("• DOWNLOAD •", url=render_dl_link)
+            ],
+            [
+                # unique_id is embedded so worker can call back /admin/update_cdn
+                InlineKeyboardButton("• GET PRODUCTION LINK •", callback_data=f"ia_upload_{sent_message.id}_{unique_id}")
+            ],
+            [
+                InlineKeyboardButton("• CLOSE •", callback_data="close_data")
+            ]
+        ])
+        
+        await message.reply_text(response_text, reply_markup=buttons, quote=True, parse_mode=enums.ParseMode.HTML)
+
+    except Exception as e:
+        print(f"Upload Error: {e}")
+        await message.reply_text(f"❌ Error: {e}")
+
+@bot.on_callback_query(filters.regex("close_data"))
+async def close_handler(client, callback_query):
+    await callback_query.message.delete()
+
+# --- SEND TO CONTROLLER (MEDIUM WORKER) ---
+@bot.on_callback_query(filters.regex(r"^ia_upload_"))
+async def ia_upload_handler(client, callback_query):
+    if await db.is_user_banned(callback_query.from_user.id):
+        await callback_query.answer("🚫 You are banned.", show_alert=True)
+        return
+
+    if not Config.HF_WORKERS:
+        await callback_query.answer("❌ Error: No Controller Configured.", show_alert=True)
+        return
+
+    CONTROLLER_URL = Config.HF_WORKERS[0]
+
+    try:
+        old = callback_query.message.reply_markup.inline_keyboard
+        proc_markup = InlineKeyboardMarkup([
+            [old[0][0], old[0][1]], 
+            [InlineKeyboardButton("⏳ Queued for Production Upload...", callback_data="ignore")], 
+            old[2]
+        ])
+        await callback_query.edit_message_reply_markup(reply_markup=proc_markup)
+    except: 
+        pass
+
+    try:
+        # callback_data format: ia_upload_{message_id}_{unique_id}
+        parts = callback_query.data.split("_")
+        message_id = int(parts[2])
+        unique_id  = parts[3] if len(parts) > 3 else ""
+        user_msg   = callback_query.message.reply_to_message or callback_query.message
+        
+        stored_msg = await client.get_messages(Config.STORAGE_CHANNEL, message_id)
+        if not stored_msg:
+            raise Exception("Message not found in Storage Channel")
+
+        media    = stored_msg.document or stored_msg.video or stored_msg.audio
+        safe_name = "".join(c for c in (media.file_name or "vid.mp4") if c.isalnum() or c in ('.', '_', '-')).rstrip()
+        stream_link = f"{Config.BASE_URL}/dl/{message_id}/{safe_name}"
+        
+        payload = {
+            "stream_link": stream_link, 
+            "file_name":   media.file_name or safe_name, 
+            "chat_id":     user_msg.chat.id, 
+            "message_id":  user_msg.id,
+            # ⬇️ Worker needs this to call back /admin/update_cdn
+            "unique_id":   unique_id,
+            "render_url":  Config.BASE_URL,
+            "admin_secret": Config.ADMIN_SECRET,
+        }
+        
+        # SEND TO CONTROLLER
+        success = False
+        for attempt in range(2):
+            try:
+                resp = await asyncio.to_thread(requests.post, f"{CONTROLLER_URL}/upload", json=payload, timeout=35)
+                if resp.status_code == 200:
+                    rdata = resp.json()
+                    status_msg = rdata.get("status", "queued")
+                    if status_msg == "queued":
+                        await callback_query.answer("⏳ Added to queue! You'll be notified when done.", show_alert=True)
+                    else:
+                        await callback_query.answer("✅ Worker picked it up!", show_alert=True)
+                    success = True
+                    break
+            except Exception:
+                if attempt == 0: await asyncio.sleep(2)
+        
+        if not success:
+            raise Exception("Controller unreachable.")
+
+    except Exception as e:
+        print(f"Handoff Error: {e}")
+        await callback_query.answer("❌ Failed. Controller busy/sleeping.", show_alert=True)
+        try:
+            restore_markup = InlineKeyboardMarkup([
+                [old[0][0], old[0][1]], 
+                [InlineKeyboardButton("• GET PRODUCTION LINK •", callback_data=f"ia_upload_{message_id}_{unique_id}")], 
+                old[2]
+            ])
+            await callback_query.edit_message_reply_markup(reply_markup=restore_markup)
+        except: 
+            pass
+
+@bot.on_callback_query(filters.regex("ignore"))
+async def ignore_callback(client, callback_query):
+    await callback_query.answer("⏳ Processing...", show_alert=True)
+
+# --- WEB SERVER ---
+@app.get("/")
+async def health(): return {"status": "ok"}
+
+CONVERTER_BASE = "https://v0-hugging-face-to-xet-conversion.vercel.app/api/convert"
+
+def build_converter_url(cdn_path: str) -> str:
+    """Given just the filename/path on HF, build the converter API URL."""
+    return f"{CONVERTER_BASE}?path={cdn_path}"
+
+async def resolve_cdn_temp_url(cdn_path: str) -> str:
+    """Call the converter API and get a fresh temporary signed URL."""
+    converter_url = build_converter_url(cdn_path)
+    try:
+        resp = await asyncio.to_thread(requests.get, converter_url, timeout=15)
+        resp.raise_for_status()
+        return resp.json().get("url", "")
+    except Exception as e:
+        print(f"⚠️ Converter API error for {cdn_path}: {e}")
+        return ""
+
+# ─── POST /admin/update_cdn ──────────────────────────────────────────────────
+# Called by: HF Worker (automatically) OR your PC script (manually)
+# Payload: { unique_id, cdn_path, chat_id, admin_key }
+#   cdn_path  = just the filename stored on HF (e.g. "myvideo.mp4")
+#   chat_id   = Telegram user to notify (optional, worker provides it)
+@app.post("/admin/update_cdn")
+async def update_cdn(request: Request):
+    data      = await request.json()
+    unique_id = data.get("unique_id")
+    cdn_path  = data.get("cdn_path")   # ← just the filename, NOT a full URL
+    admin_key = data.get("admin_key", "")
+    chat_id   = data.get("chat_id")    # ← optional, for Telegram notification
+    file_name = data.get("file_name", "file")
+    
+    if admin_key != Config.ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid admin key.")
+    if not unique_id or not cdn_path:
+        raise HTTPException(status_code=400, detail="Missing unique_id or cdn_path.")
+    
+    existing = await db.get_link(unique_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"No file found with unique_id: {unique_id}")
+    
+    # Store the converter URL (not temp URL — temp URLs expire in 1h)
+    converter_url = build_converter_url(cdn_path)
+    await db.update_hf_link(unique_id, converter_url)
+    
+    # Notify the user on Telegram that their production link is ready
+    if chat_id:
+        production_link = f"{Config.BASE_URL}/show/{unique_id}"
+        try:
+            await bot.send_message(
+                chat_id=int(chat_id),
+                text=(
+                    f"🚀 <b>Production Link Ready!</b>\n\n"
+                    f"📂 <b>File:</b> {file_name}\n\n"
+                    f"✅ Your file is now served from <b>Hugging Face CDN</b> — zero buffering!\n\n"
+                    f"🔗 <b>Same link still works:</b>\n"
+                    f"<code>{production_link}</code>\n\n"
+                    f"Every time you open it, a fresh secure URL is generated automatically."
+                ),
+                parse_mode=enums.ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("▶️ Open Production Link", url=production_link)]
+                ])
+            )
+        except Exception as e:
+            print(f"⚠️ Could not notify user {chat_id}: {e}")
+    
+    return {"status": "ok", "message": f"CDN path saved for {unique_id}"}
+
+
+# ─── GET /cdn/resolve ─────────────────────────────────────────────────────────
+# The file opener calls this to get a fresh temp URL without knowing the HF path.
+# Query: ?unique_id=abc123
+@app.get("/cdn/resolve")
+async def cdn_resolve(unique_id: str):
+    converter_url = await db.get_hf_link(unique_id)
+    if not converter_url:
+        raise HTTPException(404, "No CDN link found for this file.")
+    temp_url = await resolve_cdn_temp_url(converter_url.split("path=")[-1])
+    if not temp_url:
+        raise HTTPException(502, "Could not resolve CDN temp URL.")
+    return {"url": temp_url}
+
+
+# ─── /listnohf (Admin Telegram Command) ──────────────────────────────────────
+@bot.on_message(filters.command("listnohf") & filters.user(Config.ADMINS))
+async def listnohf_command(client, message: Message):
+    """List all files that are NOT yet on HF CDN so you know what to upload."""
+    if db.col_links is None:
+        await message.reply("❌ Database not connected.")
+        return
+    await message.reply("🔍 Scanning database for files not on HF CDN...")
+    
+    cursor   = db.col_links.find({'hf_cdn_url': None})
+    no_hf    = await cursor.to_list(length=200)
+    
+    if not no_hf:
+        await message.reply("✅ All files are on HF CDN! Nothing to upload.")
+        return
+    
+    lines = [f"📋 <b>Files NOT on HF CDN ({len(no_hf)} total):</b>\n"]
+    for doc in no_hf:
+        uid  = doc.get('_id', 'unknown')
+        mid  = doc.get('message_id', '?')
+        link = f"{Config.BASE_URL}/show/{uid}"
+        lines.append(f"• <code>{uid}</code> | msg: <code>{mid}</code>\n  <a href='{link}'>Open</a>")
+    
+    # Split into chunks if too long for one message
+    chunk = ""
+    for line in lines:
+        if len(chunk) + len(line) > 3500:
+            await message.reply(chunk, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+            chunk = ""
+        chunk += line + "\n"
+    if chunk:
+        await message.reply(chunk, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+
+@app.get("/show/{unique_id}", response_class=HTMLResponse)
+async def show_page(request: Request, unique_id: str):
+    storage_msg_id = await db.get_link(unique_id)
+    if not storage_msg_id: raise HTTPException(404, "Link Expired")
+    try:
+        msg = await multi_clients[0].get_messages(Config.STORAGE_CHANNEL, storage_msg_id)
+        media     = msg.document or msg.video or msg.audio
+        file_name = media.file_name or "File"
+        safe_name = "".join(c for c in file_name if c.isalnum() or c in (' ', '.', '_', '-')).rstrip()
+        file_size = get_readable_file_size(media.file_size)
+        direct_link = f"{Config.BASE_URL}/dl/{storage_msg_id}/{safe_name}"
+        
+        # Check if file is on HF CDN
+        converter_url = await db.get_hf_link(unique_id)  # stored as converter URL
+        is_cdn        = bool(converter_url)
+        
+        if is_cdn:
+            # Resolve a fresh signed temp URL right now for the page load
+            cdn_path  = converter_url.split("path=")[-1]
+            temp_url  = await resolve_cdn_temp_url(cdn_path)
+            render_url = temp_url if temp_url else direct_link
+        else:
+            render_url = direct_link
+        
+        context = {
+            "request":      request,
+            "file_name":    file_name,
+            "file_size":    file_size,
+            "is_media":     (media.mime_type or "").startswith(("video", "audio")),
+            "direct_dl_link": render_url,
+            "render_url":   render_url,
+            "is_cdn":       is_cdn,
+            # Pass unique_id so JS can call /cdn/resolve to refresh the URL
+            "unique_id":    unique_id,
+        }
+        return templates.TemplateResponse("show.html", context)
+    except: raise HTTPException(404, "File Not Found")
+
+class ByteStreamer:
+    def __init__(self, client: Client):
+        self.client = client
+
+    async def yield_file(self, file_id: FileId, index, offset, first_part_cut, last_part_cut, part_count, chunk_size):
+        client = self.client
+        work_loads[index] += 1
+        media_session = client.media_sessions.get(file_id.dc_id)
+        if media_session is None:
+            if file_id.dc_id != await client.storage.dc_id():
+                auth_key = await Auth(client, file_id.dc_id, await client.storage.test_mode()).create()
+                media_session = Session(client, file_id.dc_id, auth_key, await client.storage.test_mode(), is_media=True)
+                await media_session.start()
+                exported_auth = await client.invoke(raw.functions.auth.ExportAuthorization(dc_id=file_id.dc_id))
+                await media_session.invoke(raw.functions.auth.ImportAuthorization(id=exported_auth.id, bytes=exported_auth.bytes))
+            else:
+                media_session = client.session
+            client.media_sessions[file_id.dc_id] = media_session
+        location = raw.types.InputDocumentFileLocation(
+            id=file_id.media_id, access_hash=file_id.access_hash,
+            file_reference=file_id.file_reference, thumb_size=file_id.thumbnail_size
+        )
+        current_part = 1
+        try:
+            while current_part <= part_count:
+                r = await media_session.invoke(
+                    raw.functions.upload.GetFile(location=location, offset=offset, limit=chunk_size), retries=0
+                )
+                if isinstance(r, raw.types.upload.File):
+                    chunk = r.bytes
+                    if not chunk: break
+                    if part_count == 1: yield chunk[first_part_cut:last_part_cut]
+                    elif current_part == 1: yield chunk[first_part_cut:]
+                    elif current_part == part_count: yield chunk[:last_part_cut]
+                    else: yield chunk
+                    current_part += 1
+                    offset += chunk_size
+                else: break
+        finally:
+            work_loads[index] -= 1
+
+@app.get("/dl/{mid}/{fname}")
+async def stream_media(request: Request, mid: int, fname: str):
+    try:
+        # ⚡ SMART CDN REDIRECT via Converter API
+        # Check DB: does this message_id have an HF CDN converter URL stored?
+        if db.col_links is not None:
+            doc = await db.col_links.find_one({'message_id': mid, 'hf_cdn_url': {'$ne': None}})
+            if doc:
+                converter_url = doc.get('hf_cdn_url', '')
+                cdn_path      = converter_url.split("path=")[-1]
+                temp_url      = await resolve_cdn_temp_url(cdn_path)
+                if temp_url:
+                    print(f"⚡ CDN Redirect via converter: msg_id={mid}")
+                    return RedirectResponse(url=temp_url, status_code=302)
+        
+        # File is NOT on HF CDN — stream directly from Telegram.
+        index    = min(work_loads, key=work_loads.get, default=0)
+        client   = multi_clients[index]
+        streamer = class_cache.get(client) or ByteStreamer(client)
+        class_cache[client] = streamer
+        msg   = await client.get_messages(Config.STORAGE_CHANNEL, mid)
+        media = msg.document or msg.video or msg.audio
+        if not media: raise FileNotFoundError
+        file_id   = FileId.decode(media.file_id)
+        file_size = media.file_size
+        
+        range_header = request.headers.get("Range", 0)
+        from_bytes, until_bytes = 0, file_size - 1
+        
+        if range_header:
+            s = range_header.replace("bytes=", "").split("-")
+            from_bytes = int(s[0])
+            if s[1]: until_bytes = int(s[1])
+            
+        req_length = until_bytes - from_bytes + 1
+        chunk_size = 1024 * 1024
+        offset         = (from_bytes // chunk_size) * chunk_size
+        first_part_cut = from_bytes - offset
+        last_part_cut  = (until_bytes % chunk_size) + 1
+        part_count     = math.ceil(req_length / chunk_size)
+        
+        body = streamer.yield_file(file_id, index, offset, first_part_cut, last_part_cut, part_count, chunk_size)
+        
+        headers = {
+            "Content-Type": media.mime_type or "application/octet-stream",
+            "Content-Disposition": f'inline; filename="{media.file_name}"',
+            "Content-Length": str(req_length),
+            "Accept-Ranges": "bytes"
+        }
+        status_code = 206 if range_header else 200
+        if range_header: headers["Content-Range"] = f"bytes {from_bytes}-{until_bytes}/{file_size}"
+        return StreamingResponse(body, status_code=status_code, headers=headers)
+    except Exception: raise HTTPException(404)
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host=Config.BIND_ADDRESS, port=Config.PORT)
+    uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+        
