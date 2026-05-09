@@ -97,6 +97,15 @@ async def lifespan(app: FastAPI):
                 await bot.send_message(Config.LOG_CHANNEL, "🟢 **Bot Online (Controller Mode)**")
             except:
                 pass
+                
+        # ⚡ FIX for 'PeerIdInvalid' on Render:
+        # Fetch dialogs to cache private channel access hashes in the newly created session.
+        try:
+            async for _ in bot.get_dialogs():
+                pass
+            print("✅ Channel peers cached successfully.")
+        except Exception as e:
+            print(f"⚠️ Could not cache dialogs: {e}")
 
     except Exception as e:
         print(f"Startup Error: {e}")
