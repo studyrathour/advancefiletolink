@@ -70,19 +70,38 @@ async def stream_file(
     await db.increment_downloads(file_id)
 
     range_header = request.headers.get("Range")
-    client = request.client.host if request.client else "unknown"
+    
+    file_size = file_data.get("file_size", 0)
+    headers = {
+        "Content-Disposition": f"{'attachment' if download else 'inline'}; filename=\"{file_data['file_name']}\"",
+        "Accept-Ranges": "bytes"
+    }
+    status_code = 200
+
+    if range_header:
+        try:
+            range_str = range_header.replace("bytes=", "")
+            parts = range_str.split("-")
+            start_offset = int(parts[0]) if parts[0] else 0
+            end_offset = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
+            
+            content_length = end_offset - start_offset + 1
+            headers["Content-Length"] = str(content_length)
+            headers["Content-Range"] = f"bytes {start_offset}-{end_offset}/{file_size}"
+            status_code = 206
+        except Exception:
+            headers["Content-Length"] = str(file_size)
+    else:
+        headers["Content-Length"] = str(file_size)
 
     if Config.FINGERPRINT:
         await verify_fingerprint(request)
 
     return StreamingResponse(
         stream_content(file_data, range_header),
+        status_code=status_code,
         media_type="application/octet-stream",
-        headers={
-            "Content-Disposition": f"{'attachment' if download else 'inline'}; filename=\"{file_data['file_name']}\"",
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(file_data.get("file_size", 0))
-        }
+        headers=headers
     )
 
 async def stream_content(file_data: dict, range_header: Optional[str] = None):
@@ -102,7 +121,7 @@ async def stream_content(file_data: dict, range_header: Optional[str] = None):
             range_str = range_header.replace("bytes=", "")
             parts = range_str.split("-")
             start_offset = int(parts[0]) if parts[0] else 0
-            end_offset = int(parts[1]) if parts[1] and parts[1] else file_size - 1
+            end_offset = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
         except:
             pass
 
@@ -113,29 +132,34 @@ async def stream_content(file_data: dict, range_header: Optional[str] = None):
                 file = msg.document or msg.video or msg.audio or msg.voice or msg.animation
                 if file:
                     file_id_str = str(file.file_id)
+                    
+                    bytes_to_yield = end_offset - start_offset + 1
+                    yielded_bytes = 0
 
-                    if range_header:
-                        chunk_size = 1024 * 1024
-                        current_offset = start_offset
+                    CHUNK_SIZE = 1024 * 1024
+                    aligned_offset = start_offset - (start_offset % CHUNK_SIZE)
+                    skip_bytes = start_offset - aligned_offset
 
-                        while current_offset <= end_offset:
-                            chunk_end = min(current_offset + chunk_size - 1, end_offset)
-                            async for chunk in streamer.stream_file(
-                                file_id_str,
-                                offset=current_offset,
-                                part_size=min(chunk_size, chunk_end - current_offset + 1)
-                            ):
-                                if chunk:
-                                    yield chunk
-                            current_offset += chunk_size
-
-                            if current_offset > end_offset:
+                    async for chunk in streamer.stream_file(file_id_str, offset=aligned_offset):
+                        if chunk:
+                            if skip_bytes > 0:
+                                if len(chunk) <= skip_bytes:
+                                    skip_bytes -= len(chunk)
+                                    continue
+                                else:
+                                    chunk = chunk[skip_bytes:]
+                                    skip_bytes = 0
+                            
+                            if yielded_bytes + len(chunk) > bytes_to_yield:
+                                remaining = bytes_to_yield - yielded_bytes
+                                yield chunk[:remaining]
                                 break
-                    else:
-                        async for chunk in streamer.stream_file(file_id_str):
-                            if chunk:
-                                yield chunk
-
+                            
+                            yield chunk
+                            yielded_bytes += len(chunk)
+                            
+                            if yielded_bytes >= bytes_to_yield:
+                                break
                     return
         except Exception as e:
             print(f"Stream error with client: {e}")
