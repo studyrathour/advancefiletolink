@@ -293,7 +293,10 @@ async def handle_file_upload(client: Client, message: Message):
 
     try:
         sent_message = await message.copy(chat_id=Config.STORAGE_CHANNEL)
-             media = message.document or message.video or message.audio
+        unique_id = secrets.token_urlsafe(8)
+        await db.save_link(unique_id, sent_message.id)
+        
+        media = message.document or message.video or message.audio
         file_name = media.file_name or "Unknown_File"
         file_size = get_readable_file_size(media.file_size)
         
