@@ -35,17 +35,12 @@ async def poll_controller_queue():
         print("⚠️ No Controller URL configured. Polling disabled.")
         return
 
-    # We assume the first URL in the list is your Controller
     CONTROLLER_URL = Config.HF_WORKERS[0]
     print(f"🔄 Connected to Controller: {CONTROLLER_URL}")
     print("🚀 Polling set to 15 seconds...")
-    
-    VIEWER_BASE = "https://v0-file-opener-video-player.vercel.app/view?value="
 
     while True:
         try:
-            # Poll the Controller for finished tasks
-            # Timeout 10s is plenty for the Controller to respond
             response = await asyncio.to_thread(requests.get, f"{CONTROLLER_URL}/botmessages", timeout=10)
 
             if response.status_code == 200:
@@ -56,53 +51,27 @@ async def poll_controller_queue():
                     sent_ids = []
                     for msg in messages:
                         try:
-                            # Extract Link & Create Viewer URL
-                            url_match = re.search(r"href=['\"](.*?)['\"]", msg['text'])
-                            if url_match:
-                                raw_url = url_match.group(1)
-                                url_bytes = raw_url.encode('ascii')
-                                base64_bytes = base64.b64encode(url_bytes)
-                                base64_code = base64_bytes.decode('ascii')
-                                final_viewer_link = f"{VIEWER_BASE}{base64_code}"
-                                
-                                filename_match = re.search(r"📂 <b>File:</b> (.*)\n", msg['text'])
-                                filename = filename_match.group(1) if filename_match else "File"
-
-                                result_text = (
-                                    f"✅ <b>Permanent Link Ready!</b>\n\n"
-                                    f"📂 <b>File:</b> {filename}\n\n"
-                                    f"👇 <b>Click below to Watch/Download</b>"
-                                )
-                                
-                                buttons = InlineKeyboardMarkup([
-                                    [InlineKeyboardButton("▶️ Open Online Player", url=final_viewer_link)]
-                                ])
-
-                                await bot.send_message(
-                                    chat_id=msg['chat_id'], 
-                                    text=result_text, 
-                                    parse_mode=enums.ParseMode.HTML,
-                                    reply_markup=buttons
-                                )
-                            else:
-                                # Fallback if regex fails
-                                await bot.send_message(msg['chat_id'], msg['text'], parse_mode=enums.ParseMode.HTML)
-
+                            await bot.send_message(
+                                chat_id=msg['chat_id'],
+                                text=msg['text'],
+                                parse_mode=enums.ParseMode.HTML,
+                                disable_web_page_preview=True
+                            )
                             sent_ids.append(msg['id'])
-                            await asyncio.sleep(0.5) # Floodwait protection
+                            await asyncio.sleep(0.5)
                         except Exception as e:
                             print(f"❌ Failed to send to {msg.get('chat_id')}: {e}")
 
-                    # Tell Controller we delivered these messages
                     if sent_ids:
-                        payload = {"message_ids": sent_ids}
-                        await asyncio.to_thread(requests.post, f"{CONTROLLER_URL}/donebotmessages", json=payload, timeout=10)
-        
-        except Exception as e:
-            # Controller might be sleeping or restarting, just wait
+                        await asyncio.to_thread(
+                            requests.post,
+                            f"{CONTROLLER_URL}/donebotmessages",
+                            json={"message_ids": sent_ids},
+                            timeout=10
+                        )
+        except Exception:
             pass
-        
-        # ⚡ UPDATED: Sleep for 15 seconds instead of 30
+
         await asyncio.sleep(15)
         # =====================================================================================
 # --- SETUP, LOGGING & ADMIN COMMANDS ---
@@ -324,39 +293,32 @@ async def handle_file_upload(client: Client, message: Message):
 
     try:
         sent_message = await message.copy(chat_id=Config.STORAGE_CHANNEL)
-        unique_id = secrets.token_urlsafe(8)
-        await db.save_link(unique_id, sent_message.id)
-        
-        media = message.document or message.video or message.audio
+             media = message.document or message.video or message.audio
         file_name = media.file_name or "Unknown_File"
         file_size = get_readable_file_size(media.file_size)
         
-        stream_link = f"{Config.BASE_URL}/show/{unique_id}"
-        render_dl_link = f"{Config.BASE_URL}/dl/{sent_message.id}/{file_name.replace(' ', '_')}"
+        # /show/{unique_id} is the built-in Render file viewer
+        show_link   = f"{Config.BASE_URL}/show/{unique_id}"
+        dl_link     = f"{Config.BASE_URL}/dl/{sent_message.id}/{file_name.replace(' ', '_')}"
         
-        render_bytes = render_dl_link.encode('ascii')
-        render_base64 = base64.b64encode(render_bytes).decode('ascii')
-        opener_link = f"https://v0-file-opener-video-player.vercel.app/view?value={render_base64}"
-        
-        asyncio.create_task(send_log(message.from_user, file_name, file_size, opener_link, render_dl_link))
+        asyncio.create_task(send_log(message.from_user, file_name, file_size, show_link, dl_link))
 
         response_text = (
             f"<b><u>Your Link Generated !</u></b>\n\n"
             f"📧 <b>FILE NAME :-</b> <code>{file_name}</code>\n\n"
             f"📦 <b>FILE SIZE :-</b> {file_size}\n\n"
             f"<b><u>Tap To Copy Link</u></b> 👇\n\n"
-            f"🖥 <b>Stream :</b> <code>{stream_link}</code>\n\n"
-            f"📥 <b>Download :</b> <code>{render_dl_link}</code>\n\n"
-            f"🚸 <b>NOTE : LINK WON'T EXPIRE TILL I DELETE 🤡</b>"
+            f"🖥 <b>Stream :</b> <code>{show_link}</code>\n\n"
+            f"📥 <b>Download :</b> <code>{dl_link}</code>\n\n"
+            f"🚨 <b>NOTE : LINK WON'T EXPIRE TILL I DELETE 🤡</b>"
         )
         
         buttons = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("• STREAM •", url=opener_link),
-                InlineKeyboardButton("• DOWNLOAD •", url=render_dl_link)
+                InlineKeyboardButton("• STREAM •", url=show_link),
+                InlineKeyboardButton("• DOWNLOAD •", url=dl_link)
             ],
             [
-                # unique_id is embedded so worker can call back /admin/update_cdn
                 InlineKeyboardButton("• GET PRODUCTION LINK •", callback_data=f"ia_upload_{sent_message.id}_{unique_id}")
             ],
             [

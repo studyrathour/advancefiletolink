@@ -3,45 +3,325 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Secure File Access</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<title>{{ file_name }} — FileToLink</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-    body { background: #0f172a; color: white; font-family: sans-serif; }
-    .glass { background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); border-radius: 1rem; border: 1px solid rgba(255,255,255,0.2); }
-    .btn { display: block; width: 100%; padding: 12px; margin-top: 10px; border-radius: 8px; text-align: center; font-weight: bold; transition: 0.2s; text-decoration: none;}
-    .btn-primary { background: #3b82f6; color: white; }
-    .btn-primary:hover { background: #2563eb; }
-    .btn-outline { border: 1px solid rgba(255,255,255,0.3); color: #ddd; }
-    .btn-outline:hover { background: rgba(255,255,255,0.1); }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0a0a0f;
+    --surface:  #111118;
+    --border:   rgba(255,255,255,0.08);
+    --accent:   #6c63ff;
+    --accent2:  #a78bfa;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --success:  #22c55e;
+    --radius:   16px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 24px 16px 48px;
+  }
+
+  /* ── Header ── */
+  .header {
+    width: 100%;
+    max-width: 780px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 28px;
+  }
+  .logo {
+    font-size: 1.25rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  {% if is_cdn %}
+  .cdn-badge {
+    margin-left: auto;
+    padding: 4px 10px;
+    border-radius: 99px;
+    background: rgba(34,197,94,0.15);
+    border: 1px solid rgba(34,197,94,0.35);
+    color: var(--success);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+  }
+  {% endif %}
+
+  /* ── Card ── */
+  .card {
+    width: 100%;
+    max-width: 780px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  /* ── Media Player ── */
+  .player-wrap {
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 240px;
+    position: relative;
+  }
+  video, audio {
+    width: 100%;
+    max-height: 460px;
+    outline: none;
+    display: block;
+  }
+  audio {
+    width: calc(100% - 32px);
+    margin: 24px 16px;
+    accent-color: var(--accent);
+  }
+
+  /* ── File Icon (non-media) ── */
+  .file-icon-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    gap: 12px;
+    color: var(--muted);
+  }
+  .file-icon { font-size: 4rem; }
+
+  /* ── Info Section ── */
+  .info {
+    padding: 20px 24px;
+    border-top: 1px solid var(--border);
+  }
+  .file-name {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+    word-break: break-all;
+    margin-bottom: 4px;
+  }
+  .file-meta {
+    font-size: 0.78rem;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .meta-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--muted); }
+
+  /* ── Buttons ── */
+  .actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 13px 20px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.18s ease;
+    cursor: pointer;
+    border: none;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    color: #fff;
+    box-shadow: 0 4px 20px rgba(108,99,255,0.35);
+  }
+  .btn-primary:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .btn-outline:hover { background: rgba(255,255,255,0.05); transform: translateY(-1px); }
+  .btn-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  /* ── Copy link area ── */
+  .copy-wrap {
+    margin-top: 16px;
+    display: flex;
+    align-items: center;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .copy-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--muted);
+    font-size: 0.78rem;
+    padding: 10px 14px;
+    font-family: monospace;
+  }
+  .copy-btn {
+    padding: 10px 16px;
+    background: rgba(108,99,255,0.15);
+    border: none;
+    border-left: 1px solid var(--border);
+    color: var(--accent2);
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .copy-btn:hover { background: rgba(108,99,255,0.28); }
+
+  /* ── Footer ── */
+  .footer {
+    margin-top: 24px;
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  @media (max-width: 480px) {
+    .btn-row { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
-<body class="flex items-center justify-center min-h-screen p-4">
+<body>
 
-<div class="glass max-w-md w-full p-8 text-center shadow-lg">
-    <h1 class="text-2xl font-bold mb-2">File Ready</h1>
-    <p class="text-gray-400 break-all mb-6 text-sm">{{ file_name }}</p>
-    <p class="text-xs text-gray-500 mb-6 uppercase tracking-widest">{{ file_size }}</p>
-
-    <a href="https://v0-file-opener-video-player.vercel.app/view?value={{ render_url }}" target="_blank" class="btn btn-primary">
-        ▶️ Open Online
-    </a>
-
-    <a href="{{ direct_dl_link }}" class="btn btn-outline">
-        ⬇️ Download File
-    </a>
-
-    {% if is_media %}
-    <a href="intent:{{ direct_dl_link }}#Intent;action=android.intent.action.VIEW;type=video/*;end" class="btn btn-outline">
-        📱 Play in MX Player
-    </a>
-
-    <a href="intent:{{ direct_dl_link }}#Intent;action=android.intent.action.VIEW;type=video/*;package=org.videolan.vlc;end" class="btn btn-outline">
-        🟠 Play in VLC Player
-    </a>
-    {% endif %}
-    
-    <p class="mt-6 text-xs text-gray-500">Links expire if the file is deleted.</p>
+<div class="header">
+  <span class="logo">⚡ FileToLink</span>
+  {% if is_cdn %}
+  <span class="cdn-badge">✦ HF CDN</span>
+  {% endif %}
 </div>
+
+<div class="card">
+
+  <!-- ── Player / Preview ── -->
+  {% if is_media %}
+  <div class="player-wrap">
+    {% if 'audio' in render_url or '.mp3' in file_name or '.ogg' in file_name or '.flac' in file_name or '.wav' in file_name %}
+    <audio controls autoplay preload="metadata">
+      <source src="{{ render_url }}">
+      Your browser does not support audio playback.
+    </audio>
+    {% else %}
+    <video controls autoplay preload="metadata" playsinline>
+      <source src="{{ render_url }}">
+      Your browser does not support video playback.
+    </video>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="file-icon-wrap">
+    {% set ext = file_name.rsplit('.', 1)[-1].lower() if '.' in file_name else '' %}
+    {% if ext in ['pdf'] %}<div class="file-icon">📄</div>
+    {% elif ext in ['zip','rar','7z','tar','gz'] %}<div class="file-icon">🗜️</div>
+    {% elif ext in ['jpg','jpeg','png','gif','webp','svg'] %}<div class="file-icon">🖼️</div>
+    {% elif ext in ['apk'] %}<div class="file-icon">📱</div>
+    {% elif ext in ['exe','msi'] %}<div class="file-icon">💻</div>
+    {% else %}<div class="file-icon">📁</div>{% endif %}
+    <span style="font-size:0.85rem;">Preview not available</span>
+  </div>
+  {% endif %}
+
+  <!-- ── Info + Buttons ── -->
+  <div class="info">
+    <div class="file-name">{{ file_name }}</div>
+    <div class="file-meta">
+      <span>{{ file_size }}</span>
+      {% if is_cdn %}
+      <span class="meta-dot"></span>
+      <span style="color:var(--success)">⚡ Served from HF CDN</span>
+      {% else %}
+      <span class="meta-dot"></span>
+      <span>Streamed from Telegram</span>
+      {% endif %}
+    </div>
+
+    <div class="actions">
+      <a href="{{ render_url }}" download class="btn btn-primary">
+        ⬇️ Download File
+      </a>
+
+      {% if is_media %}
+      <div class="btn-row">
+        <a href="intent:{{ render_url }}#Intent;action=android.intent.action.VIEW;type=video/*;package=com.mxtech.videoplayer.ad;end"
+           class="btn btn-outline">📱 MX Player</a>
+        <a href="intent:{{ render_url }}#Intent;action=android.intent.action.VIEW;type=video/*;package=org.videolan.vlc;end"
+           class="btn btn-outline">🟠 VLC</a>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Copy link -->
+    <div class="copy-wrap">
+      <input class="copy-input" id="linkInput" readonly
+             value="{{ request.url }}">
+      <button class="copy-btn" onclick="copyLink()">Copy</button>
+    </div>
+  </div>
+</div>
+
+<div class="footer">Links are valid as long as the file exists · FileToLink Bot</div>
+
+<script>
+  function copyLink() {
+    const inp = document.getElementById('linkInput');
+    inp.select();
+    navigator.clipboard.writeText(inp.value).then(() => {
+      const btn = document.querySelector('.copy-btn');
+      btn.textContent = 'Copied ✓';
+      setTimeout(() => btn.textContent = 'Copy', 2000);
+    });
+  }
+
+  {% if is_cdn %}
+  // Refresh the CDN temp URL before it expires (every 45 mins, expires in 1h)
+  setTimeout(async () => {
+    try {
+      const res  = await fetch('/cdn/resolve?unique_id={{ unique_id }}');
+      const data = await res.json();
+      if (data.url) {
+        const v = document.querySelector('video source') || document.querySelector('audio source');
+        if (v) {
+          const player = v.parentElement;
+          v.src = data.url;
+          player.load();
+        }
+        document.querySelectorAll('a[download]').forEach(a => a.href = data.url);
+      }
+    } catch(e) { console.warn('CDN refresh failed', e); }
+  }, 45 * 60 * 1000);
+  {% endif %}
+</script>
 
 </body>
 </html>
